@@ -14,21 +14,21 @@ import org.elasticsearch.search.aggregations.{Aggregator, AggregatorFactory, Int
 import scala.collection.JavaConversions._
 import scala.collection.mutable
 
-object InternalCountDistinct {
-  val TYPE: Type = new Type("countdistinct")
+object InternalCountDistinctN {
+  val TYPE: Type = new Type("countdistinctn")
 }
 
-sealed case class InternalCountDistinct(var set: mutable.HashSet[Long], var nam: String) extends InternalNumericMetricsAggregation.SingleValue(nam) {
+sealed case class InternalCountDistinctN(var set: mutable.HashSet[Long], var nam: String) extends InternalNumericMetricsAggregation.SingleValue(nam) {
 
   def this() = this(null, null)
 
-  override def `type`(): Type = InternalCountDistinct.TYPE
+  override def `type`(): Type = InternalCountDistinctN.TYPE
 
   override def reduce(reduceContext: ReduceContext): InternalAggregation = {
     val set = reduceContext.aggregations().foldLeft(new mutable.HashSet[Long]()) { case (s, obj) =>
-      s ++ obj.asInstanceOf[InternalCountDistinct].set
+      s ++ obj.asInstanceOf[InternalCountDistinctN].set
     }
-    InternalCountDistinct(set, name)
+    InternalCountDistinctN(set, name)
   }
 
   override def doXContentBody(builder: XContentBuilder, params: Params): XContentBuilder = {
@@ -44,32 +44,34 @@ sealed case class InternalCountDistinct(var set: mutable.HashSet[Long], var nam:
   override def readFrom(in: StreamInput): Unit = {
     nam = in.readString()
     name = nam
-    set = new mutable.HashSet[Long] () ++ in.readLongArray()
+    set = new mutable.HashSet[Long]() ++ in.readLongArray()
   }
 
-  override def value(): Double = set.size
+  override def value(): Double = {
+    set.size
+  }
 }
 
-class CountDistinctAggregator(nam: String,
-                    estimatedBucketsCount: Long,
-                    aggregationContext: AggregationContext,
-                    parent: Aggregator,
-                    valuesSource: Option[ValuesSource.Numeric])
+class CountDistinctNAggregator(nam: String,
+                               estimatedBucketsCount: Long,
+                               aggregationContext: AggregationContext,
+                               parent: Aggregator,
+                               valuesSource: Option[ValuesSource.Numeric])
   extends NumericMetricsAggregator.SingleValue(nam, estimatedBucketsCount, aggregationContext, parent) {
 
   private var values: SortedNumericDoubleValues = _
 
-  private val ord2set = mutable.Map[Long, mutable.HashSet[Long]] ()
+  private val ord2set = mutable.Map[Long, mutable.HashSet[Long]]()
 
   override def shouldCollect(): Boolean = valuesSource.isDefined
 
   override def buildEmptyAggregation(): InternalAggregation = {
-    InternalCountDistinct(new mutable.HashSet[Long](), name)
+    InternalCountDistinctN(new mutable.HashSet[Long](), name)
   }
 
   override def buildAggregation(owningBucketOrdinal: Long): InternalAggregation = {
     ord2set.get(owningBucketOrdinal) match {
-      case Some(set) => InternalCountDistinct(set, name)
+      case Some(set) => InternalCountDistinctN(set, name)
       case _ => buildEmptyAggregation()
     }
   }
@@ -100,25 +102,25 @@ class CountDistinctAggregator(nam: String,
   }
 }
 
-class CountDistinctAggregatorFactory(nam: String, config: ValuesSourceConfig[ValuesSource.Numeric])
-  extends ValuesSourceAggregatorFactory[ValuesSource.Numeric](nam, InternalCountDistinct.TYPE.name(), config) {
+class CountDistinctNAggregatorFactory(nam: String, config: ValuesSourceConfig[ValuesSource.Numeric])
+  extends ValuesSourceAggregatorFactory[ValuesSource.Numeric](nam, InternalCountDistinctN.TYPE.name(), config) {
 
   override def createUnmapped(aggregationContext: AggregationContext,
                               parent: Aggregator): Aggregator = {
-    new CountDistinctAggregator(name, 0, aggregationContext, parent, None)
+    new CountDistinctNAggregator(name, 0, aggregationContext, parent, None)
   }
 
   override def create(valuesSource: Numeric,
                       expectedBucketsCount: Long,
                       aggregationContext: AggregationContext,
                       parent: Aggregator): Aggregator = {
-    new CountDistinctAggregator(name, expectedBucketsCount, aggregationContext, parent, Some(valuesSource))
+    new CountDistinctNAggregator(name, expectedBucketsCount, aggregationContext, parent, Some(valuesSource))
   }
 }
 
-class CountDistinctPluginParser extends NumericValuesSourceMetricsAggregatorParser[InternalCountDistinct](InternalCountDistinct.TYPE) {
+class CountDistinctNPluginParser extends NumericValuesSourceMetricsAggregatorParser[InternalCountDistinctN](InternalCountDistinctN.TYPE) {
 
   override def createFactory(aggregationName: String, config: ValuesSourceConfig[Numeric]): AggregatorFactory = {
-    new CountDistinctAggregatorFactory(aggregationName, config)
+    new CountDistinctNAggregatorFactory(aggregationName, config)
   }
 }
