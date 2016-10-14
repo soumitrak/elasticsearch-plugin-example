@@ -5,6 +5,7 @@ import org.elasticsearch.common.io.stream.{StreamInput, StreamOutput}
 import org.elasticsearch.common.xcontent.ToXContent.Params
 import org.elasticsearch.common.xcontent.{XContentBuilder, XContentParser}
 import org.elasticsearch.index.fielddata.SortedBinaryDocValues
+import org.elasticsearch.search.SearchParseException
 import org.elasticsearch.search.aggregations.InternalAggregation.{CommonFields, ReduceContext, Type}
 import org.elasticsearch.search.aggregations.metrics.{InternalNumericMetricsAggregation, NumericMetricsAggregator}
 import org.elasticsearch.search.aggregations.support._
@@ -124,17 +125,24 @@ class CountDistinctPluginParser extends Aggregator.Parser {
   override def `type`(): String = InternalCountDistinct.TYPE.name()
 
   override def parse(aggregationName: String, parser: XContentParser, context: SearchContext): AggregatorFactory = {
+    val vsParser = ValuesSourceParser.any(aggregationName, InternalCountDistinct.TYPE, context)
+      .formattable(false).build.asInstanceOf[ValuesSourceParser[ValuesSource]]
+
+    var currentFieldName: String = null
     var done = false
     while (!done) {
       val token = parser.nextToken
       if (token != XContentParser.Token.END_OBJECT) {
+        if (token eq XContentParser.Token.FIELD_NAME) {
+          currentFieldName = parser.currentName
+        } else if (vsParser.token(currentFieldName, token, parser)) {
+        } else {
+          throw new SearchParseException(context, "Unexpected token " + token + " in [" + aggregationName + "].")
+        }
       } else {
         done = true
       }
     }
-
-    val vsParser = ValuesSourceParser.any(aggregationName, InternalCountDistinct.TYPE, context)
-      .formattable(false).build.asInstanceOf[ValuesSourceParser[ValuesSource]]
 
     new CountDistinctAggregatorFactory(aggregationName, vsParser.config())
   }
