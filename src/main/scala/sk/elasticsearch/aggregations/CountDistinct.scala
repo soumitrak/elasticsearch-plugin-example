@@ -6,10 +6,11 @@ import org.elasticsearch.common.xcontent.ToXContent.Params
 import org.elasticsearch.common.xcontent.{XContentBuilder, XContentParser}
 import org.elasticsearch.index.fielddata.SortedBinaryDocValues
 import org.elasticsearch.search.SearchParseException
+import org.elasticsearch.search.aggregations.AggregationStreams.Stream
 import org.elasticsearch.search.aggregations.InternalAggregation.{CommonFields, ReduceContext, Type}
 import org.elasticsearch.search.aggregations.metrics.{InternalNumericMetricsAggregation, NumericMetricsAggregator}
 import org.elasticsearch.search.aggregations.support._
-import org.elasticsearch.search.aggregations.{Aggregator, AggregatorFactory, InternalAggregation}
+import org.elasticsearch.search.aggregations.{AggregationStreams, Aggregator, AggregatorFactory, InternalAggregation}
 import org.elasticsearch.search.internal.SearchContext
 
 import scala.collection.JavaConversions._
@@ -17,9 +18,34 @@ import scala.collection.mutable
 
 object InternalCountDistinct {
   val TYPE: Type = new Type("countdistinct")
+
+  val STREAM = new Stream {
+    override def readResult(in: StreamInput): InternalAggregation = {
+      val b = in.readByte()
+      if (b == 0) {
+        val tmp = InternalCountDistinctN()
+        tmp.readFromImpl(in)
+        tmp
+      } else {
+        val tmp = InternalCountDistinctS()
+        tmp.readFromImpl(in)
+        tmp
+      }
+    }
+  }
+
+  def registerStreams = {
+    AggregationStreams.registerStream(STREAM, TYPE.stream)
+  }
 }
 
-sealed case class InternalCountDistinctS (var set: mutable.HashSet[String], var nam: String) extends InternalNumericMetricsAggregation.SingleValue(nam) {
+object InternalCountDistinctS {
+  def apply() = new InternalCountDistinctS()
+}
+
+sealed case class InternalCountDistinctS(var set: mutable.HashSet[String],
+                                         var nam: String)
+  extends InternalNumericMetricsAggregation.SingleValue(nam) {
 
   def this() = this(null, null)
 
@@ -38,29 +64,36 @@ sealed case class InternalCountDistinctS (var set: mutable.HashSet[String], var 
   }
 
   override def writeTo(out: StreamOutput): Unit = {
+    // Write countdistinct type
+    out.writeByte(1)
     out.writeString(nam)
     out.writeStringArray(set.toArray)
   }
 
-  override def readFrom(in: StreamInput): Unit = {
+  private[aggregations] def readFromImpl(in: StreamInput): Unit = {
     nam = in.readString()
     name = nam
-    set = new mutable.HashSet[String] () ++ in.readStringArray()
+    set = new mutable.HashSet[String]() ++ in.readStringArray()
+  }
+
+  override def readFrom(in: StreamInput): Unit = {
+    val b = in.readByte() // TODO: b has to be 1
+    readFromImpl(in)
   }
 
   override def value(): Double = set.size
 }
 
-class CountDistinctSAggregator (nam: String,
-                    estimatedBucketsCount: Long,
-                    aggregationContext: AggregationContext,
-                    parent: Aggregator,
-                    valuesSource: Option[ValuesSource])
+class CountDistinctSAggregator(nam: String,
+                               estimatedBucketsCount: Long,
+                               aggregationContext: AggregationContext,
+                               parent: Aggregator,
+                               valuesSource: Option[ValuesSource])
   extends NumericMetricsAggregator.SingleValue(nam, estimatedBucketsCount, aggregationContext, parent) {
 
   private var values: SortedBinaryDocValues = _
 
-  private val ord2set = mutable.Map[Long, mutable.HashSet[String]] ()
+  private val ord2set = mutable.Map[Long, mutable.HashSet[String]]()
 
   override def shouldCollect(): Boolean = valuesSource.isDefined
 

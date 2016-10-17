@@ -5,17 +5,32 @@ import org.elasticsearch.common.io.stream.{StreamInput, StreamOutput}
 import org.elasticsearch.common.xcontent.ToXContent.Params
 import org.elasticsearch.common.xcontent.XContentBuilder
 import org.elasticsearch.index.fielddata.SortedNumericDoubleValues
+import org.elasticsearch.search.aggregations.AggregationStreams.Stream
 import org.elasticsearch.search.aggregations.InternalAggregation.{CommonFields, ReduceContext, Type}
 import org.elasticsearch.search.aggregations.metrics.{InternalNumericMetricsAggregation, NumericMetricsAggregator, NumericValuesSourceMetricsAggregatorParser}
 import org.elasticsearch.search.aggregations.support.ValuesSource.Numeric
 import org.elasticsearch.search.aggregations.support._
-import org.elasticsearch.search.aggregations.{Aggregator, AggregatorFactory, InternalAggregation}
+import org.elasticsearch.search.aggregations.{AggregationStreams, Aggregator, AggregatorFactory, InternalAggregation}
 
 import scala.collection.JavaConversions._
 import scala.collection.mutable
 
 object InternalCountDistinctN {
   val TYPE: Type = new Type("countdistinctn")
+
+  def apply() = new InternalCountDistinctN()
+
+  val STREAM = new Stream {
+    override def readResult(in: StreamInput): InternalAggregation = {
+      val tmp = InternalCountDistinctN()
+      tmp.readFrom(in)
+      tmp
+    }
+  }
+
+  def registerStreams = {
+    AggregationStreams.registerStream(STREAM, TYPE.stream)
+  }
 }
 
 sealed case class InternalCountDistinctN(var set: mutable.HashSet[Long], var nam: String) extends InternalNumericMetricsAggregation.SingleValue(nam) {
@@ -37,14 +52,21 @@ sealed case class InternalCountDistinctN(var set: mutable.HashSet[Long], var nam
   }
 
   override def writeTo(out: StreamOutput): Unit = {
+    // Write countdistinctn type
+    out.writeByte(0)
     out.writeString(nam)
     out.writeLongArray(set.toArray)
   }
 
-  override def readFrom(in: StreamInput): Unit = {
+  private [aggregations] def readFromImpl(in: StreamInput): Unit = {
     nam = in.readString()
     name = nam
     set = new mutable.HashSet[Long]() ++ in.readLongArray()
+  }
+
+  override def readFrom(in: StreamInput): Unit = {
+    val b = in.readByte() // TODO: b has to be 0
+    readFromImpl(in)
   }
 
   override def value(): Double = {
